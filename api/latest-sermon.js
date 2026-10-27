@@ -41,6 +41,7 @@ async function podcast(url) {
             date: new Date(tag(it, "pubDate")).toISOString(),
             summary: strip(description).split("\n").find(l => l.trim().length > 40) || strip(description),
             description: strip(description),
+            rawDescription: decode(description),
             audioUrl: attr(it, "enclosure", "url"),
             length: minutes(tag(it, "itunes:duration")),
             episodeUrl: tag(it, "link"),
@@ -49,23 +50,56 @@ async function podcast(url) {
     })
 }
 
-async function youtube(channelId, filter) {
+const BROWSER = {
+    "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+    "accept-language": "en-US,en;q=0.9",
+    cookie: "CONSENT=YES+cb; SOCS=CAI",
+}
+
+function parseFeed(xml) {
+    return items(xml, "entry").map(e => {
+        const id = tag(e, "yt:videoId")
+        return { id, title: tag(e, "title"), date: new Date(tag(e, "published")).toISOString() }
+    })
+}
+
+// YouTube often refuses its RSS feed from cloud servers (401/403/404), so try several sources.
+async function youtube(channelId, filter, errors) {
     if (!channelId) return []
-    const r = await fetch("https://www.youtube.com/feeds/videos.xml?channel_id=" + channelId, { headers: UA })
-    if (!r.ok) throw new Error("YouTube " + r.status)
-    const xml = await r.text()
-    return items(xml, "entry")
-        .map(e => {
-            const id = tag(e, "yt:videoId")
-            return {
-                id,
-                title: tag(e, "title"),
-                date: new Date(tag(e, "published")).toISOString(),
-                url: "https://youtu.be/" + id,
-                thumbnail: "https://i.ytimg.com/vi/" + id + "/maxresdefault.jpg",
-            }
-        })
+    const uploads = "UU" + channelId.slice(2)
+    let vids = []
+    const key = process.env.YOUTUBE_API_KEY
+    if (key) {
+        try {
+            const r = await fetch("https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&maxResults=15&playlistId=" + uploads + "&key=" + key)
+            if (!r.ok) throw new Error("API " + r.status)
+            const j = await r.json()
+            vids = (j.items || []).map(i => ({ id: i.snippet.resourceId.videoId, title: i.snippet.title, date: new Date(i.snippet.publishedAt).toISOString() }))
+        } catch (e) { errors.push(String(e.message || e)) }
+    }
+    const urls = [
+        "https://www.youtube.com/feeds/videos.xml?channel_id=" + channelId,
+        "https://www.youtube.com/feeds/videos.xml?playlist_id=" + uploads,
+    ]
+    for (const u of urls) {
+        if (vids.length) break
+        try {
+            const r = await fetch(u, { headers: BROWSER })
+            if (!r.ok) throw new Error("YouTube feed " + r.status)
+            vids = parseFeed(await r.text())
+        } catch (e) { errors.push(String(e.message || e)) }
+    }
+    return vids
+        .filter(v => v.id)
+        .map(v => ({ ...v, url: "https://youtu.be/" + v.id, thumbnail: "https://i.ytimg.com/vi/" + v.id + "/maxresdefault.jpg" }))
         .filter(v => !filter || v.title.toLowerCase().includes(filter.toLowerCase()))
+}
+
+// A YouTube link written in the episode description wins over feed matching.
+function linkedVideo(ep) {
+    const m = (ep && (ep.rawDescription || ep.description) || "").match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|live\/|shorts\/|embed\/))([A-Za-z0-9_-]{11})/)
+    if (!m) return null
+    return { id: m[1], url: "https://youtu.be/" + m[1], thumbnail: "https://i.ytimg.com/vi/" + m[1] + "/maxresdefault.jpg", date: ep.date, title: ep.title }
 }
 
 const words = s => new Set(s.toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter(w => w.length > 2))
@@ -78,13 +112,16 @@ function score(a, b) {
 
 export default async function handler(req, res) {
     try {
+        const errors = []
         const [eps, vids] = await Promise.all([
             podcast(process.env.SERMON_RSS_URL || "https://feeds.soundcloud.com/users/soundcloud:users:1073788417/sounds.rss"),
-            youtube(process.env.YOUTUBE_CHANNEL_ID || "UCkmZjJp4M93UZUfy3z7Cisw", process.env.YOUTUBE_FILTER),
+            youtube(process.env.YOUTUBE_CHANNEL_ID || "UCkmZjJp4M93UZUfy3z7Cisw", process.env.YOUTUBE_FILTER, errors),
         ])
         const ep = eps[0] || null
         let vid = vids[0] || null
-        if (ep && vids.length) {
+        const linked = linkedVideo(ep)
+        if (linked) vid = linked
+        else if (ep && vids.length) {
             const near = vids.filter(v => Math.abs(new Date(v.date) - new Date(ep.date)) < 10 * 864e5)
             if (near.length) vid = near.sort((a, b) => score(ep, b) - score(ep, a))[0]
         }
@@ -100,6 +137,7 @@ export default async function handler(req, res) {
             youtubeId: vid?.id || "",
             thumbnail: vid?.thumbnail || ep?.image || "",
             updated: new Date().toISOString(),
+            ...(errors.length && !vid ? { youtubeError: errors.join("; ") } : {}),
         }
         res.setHeader("Access-Control-Allow-Origin", "*")
         res.setHeader("Cache-Control", "s-maxage=900, stale-while-revalidate=86400")

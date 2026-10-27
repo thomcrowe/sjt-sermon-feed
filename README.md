@@ -8,6 +8,8 @@ YouTube channel feed (video link and thumbnail). The Framer site reads it.
 1. Push this folder to a GitHub repo (or upload it at vercel.com/new).
 2. Import it in Vercel. No build settings needed.
 3. No settings needed: the SoundCloud feed and YouTube channel are built in.
+   Optional: `YOUTUBE_API_KEY` (a free YouTube Data API key from Google Cloud) makes video
+   lookups reliable; YouTube sometimes blocks its public feed from Vercel's servers.
    Optional: add `YOUTUBE_FILTER` (e.g. `Sermon`) if the channel also posts full services,
    so only sermon videos are matched.
 4. Deploy, then open `https://<your-project>.vercel.app/api/latest-sermon` to check it.
@@ -17,3 +19,10 @@ YouTube channel feed (video link and thumbnail). The Framer site reads it.
 
 Responses are cached for 15 minutes at the edge, so new sermons show up quickly
 without hitting YouTube or Spotify on every page view.
+
+## How the video is found
+1. A YouTube link in the SoundCloud episode description (most reliable — paste the
+   video link into the episode description when you upload).
+2. The YouTube Data API, if `YOUTUBE_API_KEY` is set.
+3. YouTube's public feeds (can return 401 from cloud servers).
+If none work, the response includes `youtubeError` and the site keeps the CMS video.
