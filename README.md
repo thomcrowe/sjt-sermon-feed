@@ -1,28 +1,17 @@
 # Saint John's sermon feed
 
-One serverless function: `GET /api/latest-sermon` returns the newest sermon as JSON,
-combining the SoundCloud RSS feed (title, summary, audio, length) with the
-YouTube channel feed (video link and thumbnail). The Framer site reads it.
+One serverless function: `GET /api/latest-sermon` returns the newest video in the
+YouTube **Sermons** playlist as JSON. The Framer site's sermon cards read it.
 
-## Deploy (one time, about 5 minutes)
-1. Push this folder to a GitHub repo (or upload it at vercel.com/new).
-2. Import it in Vercel. No build settings needed.
-3. No settings needed: the SoundCloud feed and YouTube channel are built in.
-   Optional: `YOUTUBE_API_KEY` (a free YouTube Data API key from Google Cloud) makes video
-   lookups reliable; YouTube sometimes blocks its public feed from Vercel's servers.
-   Optional: add `YOUTUBE_FILTER` (e.g. `Sermon`) if the channel also posts full services,
-   so only sermon videos are matched.
-4. Deploy, then open `https://<your-project>.vercel.app/api/latest-sermon` to check it.
-5. In Framer, open the code file SermonFeed.tsx and paste that URL into
-   `export const FEED_URL = ""` near the top. The sermon cards on Home and
-   Worship then fill themselves. Leave it empty to keep using the Sermons CMS.
+It uses YouTube's public pages only (no API key, no SoundCloud):
+1. The playlist's RSS feed, when YouTube allows it from Vercel's servers.
+2. Otherwise the playlist page itself (the playlist is ordered newest first).
+3. The video's page for the description: preacher's role, "Preached <date>",
+   and the "Gospel:" line under READINGS.
 
-Responses are cached for 15 minutes at the edge, so new sermons show up quickly
-without hitting YouTube or Spotify on every page view.
+The card's title, reading and preacher come from the video title,
+e.g. `Proper 21, Year A (Matthew 21:23–32) | The Rev. Dr. Paul Wheatley | Saint John's Tulsa`.
+Keep using that title format and description template and the card fills itself.
 
-## How the video is found
-1. A YouTube link in the SoundCloud episode description (most reliable — paste the
-   video link into the episode description when you upload).
-2. The YouTube Data API, if `YOUTUBE_API_KEY` is set.
-3. YouTube's public feeds (can return 401 from cloud servers).
-If none work, the response includes `youtubeError` and the site keeps the CMS video.
+Optional: `SERMONS_PLAYLIST_ID` overrides the playlist.
+Responses are cached for 15 minutes.
