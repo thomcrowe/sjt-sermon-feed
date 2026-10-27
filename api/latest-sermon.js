@@ -100,6 +100,16 @@ function readingFrom(description) {
     return m ? m[1].trim() : ""
 }
 
+// QUOTE
+// "Jesus' authority is given, not taken."
+function quoteFrom(description) {
+    const m = description.match(/^\s*QUOTE\s*:?\s*\n+([\s\S]*?)(?:\n\s*\n|$)/m)
+    let q = m ? m[1].replace(/\s*\n\s*/g, " ").trim() : ""
+    if (!q) return ""
+    q = q.replace(/^["“”']+|["“”']+$/g, "").replace(/'/g, "’").replace(/"([^"]*)"/g, "‘$1’")
+    return "“" + q + "”"
+}
+
 function summaryFrom(description) {
     const paras = description.split(/\n\s*\n|\n/).map(s => s.trim())
         .filter(s => s.length > 40 && !/^https?:\/\//.test(s) && !/subscribe|sjtulsa\.org|follow us/i.test(s))
@@ -126,6 +136,7 @@ export default async function handler(req, res) {
         preacher,
         role: roleFrom(description, preacher),
         reading,
+        quote: quoteFrom(description),
         fullTitle: v.title,
         date: preachedDate(description) || v.date || more.date || null,
         summary: summaryFrom(description),
