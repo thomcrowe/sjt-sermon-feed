@@ -69,7 +69,7 @@ export default async function handler(req, res) {
         try {
             const html = await get(url)
             streams = parseStreams(html)
-            debug.push({ url, bytes: html.length, renderers: (html.match(/"videoRenderer"/g) || []).length, lockups: (html.match(/"lockupViewModel"/g) || []).length, consent: /consent\.youtube|before you continue/i.test(html) })
+            debug.push({ url, bytes: html.length, renderers: (html.match(/"videoRenderer"/g) || []).length, lockups: (html.match(/"lockupViewModel"/g) || []).length, consent: /consent\.youtube|before you continue/i.test(html), sample: req.query && req.query.sample ? html.slice(html.indexOf('"lockupViewModel"'), html.indexOf('"lockupViewModel"') + 6000) : undefined })
             if (streams.length) break
         } catch (e) { errors.push(String(e.message || e)) }
     }
