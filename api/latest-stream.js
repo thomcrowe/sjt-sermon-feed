@@ -64,11 +64,19 @@ export default async function handler(req, res) {
     res.setHeader("Access-Control-Allow-Origin", "*")
     let streams = []
     const errors = []
+    const debug = []
     for (const url of ["https://www.youtube.com/channel/" + CHANNEL + "/streams", "https://www.youtube.com/@sjtulsa/streams"]) {
-        try { streams = parseStreams(await get(url)); if (streams.length) break } catch (e) { errors.push(String(e.message || e)) }
+        try {
+            const html = await get(url)
+            streams = parseStreams(html)
+            debug.push({ url, bytes: html.length, renderers: (html.match(/"videoRenderer"/g) || []).length, lockups: (html.match(/"lockupViewModel"/g) || []).length, consent: /consent\.youtube|before you continue/i.test(html) })
+            if (streams.length) break
+        } catch (e) { errors.push(String(e.message || e)) }
     }
     if (!streams.length) {
-        res.status(502).json({ error: errors.join("; ") || "no streams found" })
+        // 200 so the site can fall back quietly; details explain what went wrong.
+        res.setHeader("Cache-Control", "s-maxage=60")
+        res.status(200).json({ live: null, upcoming: null, latest: null, error: errors.join("; ") || "no streams found", debug })
         return
     }
     const live = streams.find(s => s.status === "live") || null
