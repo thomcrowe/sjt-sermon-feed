@@ -23,29 +23,40 @@ async function get(url) {
     return r.text()
 }
 
-// Each video on the Live tab is a "videoRenderer" block. Read the bits we need from each one.
+// YouTube renders the Live tab in one of two layouts: older "videoRenderer" blocks or newer
+// "lockupViewModel" blocks. Read the bits we need from whichever is present.
 function parseStreams(html) {
-    const chunks = html.split('"videoRenderer":{"videoId":"').slice(1)
-    const seen = new Set()
     const out = []
-    for (const c of chunks) {
+    const seen = new Set()
+    const add = v => { if (v.id && !seen.has(v.id)) { seen.add(v.id); out.push(v) } }
+
+    for (const c of html.split('"videoRenderer":{"videoId":"').slice(1)) {
         const id = c.slice(0, 11)
-        if (!/^[\w-]{11}$/.test(id) || seen.has(id)) continue
-        seen.add(id)
+        if (!/^[\w-]{11}$/.test(id)) continue
         const block = c.slice(0, 6000)
         const t = block.match(/"title":\{"runs":\[\{"text":"((?:[^"\\]|\\.)*)"/) || block.match(/"title":\{"simpleText":"((?:[^"\\]|\\.)*)"/)
         const upcoming = block.match(/"upcomingEventData":\{"startTime":"(\d+)"/)
-        const liveNow = /"style":"LIVE"|BADGE_STYLE_TYPE_LIVE_NOW|"label":"LIVE"/.test(block) && !upcoming
+        const liveNow = /"style":"LIVE"|BADGE_STYLE_TYPE_LIVE_NOW/.test(block) && !upcoming
         const ago = block.match(/"publishedTimeText":\{"simpleText":"((?:[^"\\]|\\.)*)"/)
         const len = block.match(/"lengthText":\{[^}]*"simpleText":"([\d:]+)"/)
-        out.push({
-            id,
-            title: t ? jsonString(t[1]) : "",
-            status: liveNow ? "live" : upcoming ? "upcoming" : "past",
-            startTime: upcoming ? new Date(+upcoming[1] * 1000).toISOString() : null,
-            published: ago ? jsonString(ago[1]) : "",
-            length: len ? len[1] : "",
-        })
+        add({ id, title: t ? jsonString(t[1]) : "", status: liveNow ? "live" : upcoming ? "upcoming" : "past", startTime: upcoming ? new Date(+upcoming[1] * 1000).toISOString() : null, published: ago ? jsonString(ago[1]) : "", length: len ? len[1] : "" })
+    }
+
+    for (const c of html.split('"lockupViewModel":{"contentImage"').slice(1)) {
+        const block = c.slice(0, 15000)
+        const idm = block.match(/"contentId":"([\w-]{11})"/) || block.match(/\/vi\/([\w-]{11})\//)
+        if (!idm) continue
+        const t = block.match(/"lockupMetadataViewModel":\{"title":\{"content":"((?:[^"\\]|\\.)*)"/)
+        const badges = [...block.matchAll(/"thumbnailBadgeViewModel":\{[\s\S]{0,400}?"text":"((?:[^"\\]|\\.)*)"[\s\S]{0,80}?"badgeStyle":"([A-Z_]+)"/g)].map(m => [jsonString(m[1]), m[2]])
+        const rows = block.slice(Math.max(0, block.indexOf('"metadataRows"')), block.indexOf('"metadataRows"') + 3000)
+        const parts = block.includes('"metadataRows"') ? [...rows.matchAll(/"text":\{"content":"((?:[^"\\]|\\.)*)"/g)].map(m => jsonString(m[1])) : []
+        const meta = parts.join(" · ")
+        const badgeText = badges.map(b => b[0]).join(" ")
+        const liveNow = badges.some(b => /LIVE/.test(b[1]) && !/UPCOMING/.test(b[1])) || /^LIVE$/i.test(badgeText.trim()) || /watching/i.test(meta)
+        const upcoming = /scheduled for|premieres|upcoming/i.test(meta + " " + badgeText)
+        const time = badges.find(b => /^\d+(:\d\d)+$/.test(b[0]))
+        const ago = parts.find(p => /ago|streamed/i.test(p)) || ""
+        add({ id: idm[1], title: t ? jsonString(t[1]) : "", status: liveNow ? "live" : upcoming ? "upcoming" : "past", startTime: null, scheduled: upcoming ? parts.find(p => /scheduled|premieres/i.test(p)) || "" : "", published: ago, length: time ? time[0] : "" })
     }
     return out
 }
@@ -56,6 +67,7 @@ const shape = v => v && ({
     url: "https://youtu.be/" + v.id,
     thumbnail: "https://i.ytimg.com/vi/" + v.id + "/hqdefault.jpg",
     ...(v.startTime ? { startTime: v.startTime } : {}),
+    ...(v.scheduled ? { scheduled: v.scheduled } : {}),
     ...(v.published ? { published: v.published } : {}),
     ...(v.length ? { length: v.length } : {}),
 })
@@ -69,7 +81,7 @@ export default async function handler(req, res) {
         try {
             const html = await get(url)
             streams = parseStreams(html)
-            debug.push({ url, bytes: html.length, renderers: (html.match(/"videoRenderer"/g) || []).length, lockups: (html.match(/"lockupViewModel"/g) || []).length, consent: /consent\.youtube|before you continue/i.test(html), sample: req.query && req.query.sample ? html.slice(html.indexOf('"lockupViewModel"'), html.indexOf('"lockupViewModel"') + 6000) : undefined })
+            debug.push({ url, bytes: html.length, renderers: (html.match(/"videoRenderer"/g) || []).length, lockups: (html.match(/"lockupViewModel"/g) || []).length, consent: /consent\.youtube|before you continue/i.test(html) })
             if (streams.length) break
         } catch (e) { errors.push(String(e.message || e)) }
     }
@@ -80,7 +92,7 @@ export default async function handler(req, res) {
         return
     }
     const live = streams.find(s => s.status === "live") || null
-    const upcoming = streams.filter(s => s.status === "upcoming").sort((a, b) => a.startTime.localeCompare(b.startTime))[0] || null
+    const upcoming = streams.filter(s => s.status === "upcoming").sort((a, b) => (a.startTime || "").localeCompare(b.startTime || ""))[0] || null
     const latest = streams.find(s => s.status === "past") || null
     // Short cache so the site notices quickly when a stream starts.
     res.setHeader("Cache-Control", "s-maxage=60, stale-while-revalidate=300")
