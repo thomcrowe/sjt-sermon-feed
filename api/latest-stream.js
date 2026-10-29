@@ -9,6 +9,8 @@
 //   CHANNEL_ID  defaults to Saint John's channel
 
 const CHANNEL = process.env.CHANNEL_ID || "UCkmZjJp4M93UZUfy3z7Cisw"
+// Only Sunday services count as the "latest" recording. Override with SERVICE_TITLE_MATCH (a regular expression).
+const SERVICE = new RegExp(process.env.SERVICE_TITLE_MATCH || "eucharist|evensong", "i")
 
 const HEADERS = {
     "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
@@ -93,13 +95,15 @@ export default async function handler(req, res) {
     }
     const live = streams.find(s => s.status === "live") || null
     const upcoming = streams.filter(s => s.status === "upcoming").sort((a, b) => (a.startTime || "").localeCompare(b.startTime || ""))[0] || null
-    const latest = streams.find(s => s.status === "past") || null
+    const latest = streams.find(s => s.status === "past" && SERVICE.test(s.title)) || null
+    const latestAny = streams.find(s => s.status === "past") || null
     // Short cache so the site notices quickly when a stream starts.
     res.setHeader("Cache-Control", "s-maxage=60, stale-while-revalidate=300")
     res.status(200).json({
         live: shape(live),
         upcoming: shape(upcoming),
         latest: shape(latest),
+        latestAny: shape(latestAny),
         channelUrl: "https://www.youtube.com/channel/" + CHANNEL + "/streams",
         updated: new Date().toISOString(),
         ...(errors.length ? { notes: errors.join("; ") } : {}),
