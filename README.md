@@ -21,3 +21,11 @@ Add this to the video description and the card shows it (straight quotes become 
 
     QUOTE
     "Jesus' authority is given, not taken."
+
+## Livestream
+
+`GET /api/latest-stream` reads the channel's Live tab and returns `live` (streaming now),
+`upcoming` (next scheduled stream) and `latest` (most recent finished stream), each with
+`id`, `title`, `url` and `thumbnail`, or `null`. The website's livestream player uses it to
+play the live service, or last Sunday's service, right on the page. It caches for 60 seconds.
+Set `CHANNEL_ID` in Vercel to use a different channel.
